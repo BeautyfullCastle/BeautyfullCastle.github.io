@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ko" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DirectX 12 렌더링 원리 인터랙티브 가이드</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Calm Harmony (Background: slate-50, Text: slate-800, Primary: cyan-600, Accent: amber-500) -->
+    <!-- Application Structure Plan: A single-page, vertical scrolling application divided into three main thematic sections based on the source slide deck. A sticky top navigation bar allows for quick jumps between sections, enhancing usability. This linear, story-like structure is chosen over a slide-based format to provide a more fluid and engaging web-native learning experience. Interactive elements, like diagrams and a reference counting simulator, are integrated to make abstract concepts tangible and improve comprehension. -->
+    <!-- Visualization & Content Choices: 
+        - WDDM Diagram (HTML/CSS): Goal: Compare concepts (User/Kernel Mode). Method: Two-column layout with styled divs and hover effects. Justification: Provides clear visual separation and contextual information on interaction, superior to a static image.
+        - Process Flow (HTML/CSS Flexbox): Goal: Show a process (WDDM Flow). Method: A series of connected div blocks. Justification: Clearly illustrates the linear flow of commands.
+        - Metaphorical Diagram (HTML/CSS Grid): Goal: Explain a relationship (COM as Lego). Method: Styled divs representing Lego blocks. Justification: A strong visual metaphor aids memory and understanding of an abstract concept.
+        - Interactive Simulator (Vanilla JS): Goal: Demonstrate a dynamic concept (Reference Counting). Method: A counter with buttons to trigger AddRef/Release. Justification: Active user participation solidifies the understanding of object lifetime management far better than passive reading.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background-color: #f8fafc;
+            color: #1e293b;
+        }
+        .nav-link {
+            transition: color 0.3s, border-color 0.3s;
+        }
+        .nav-link.active {
+            color: #0891b2;
+            border-bottom-color: #0891b2;
+        }
+        .card {
+            background-color: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.1);
+        }
+        .interactive-box {
+            transition: all 0.3s ease-in-out;
+        }
+        .fade-out {
+            opacity: 0;
+            transform: scale(0.9);
+        }
+    </style>
+</head>
+<body class="bg-slate-50">
+
+    <header id="main-header" class="bg-white/80 backdrop-blur-sm sticky top-0 z-50 shadow-md">
+        <nav class="container mx-auto px-6 py-3">
+            <ul class="flex justify-center space-x-4 md:space-x-8">
+                <li><a href="#part1" class="nav-link text-slate-600 hover:text-cyan-600 pb-2 border-b-2 border-transparent font-semibold">1. 소통의 틀</a></li>
+                <li><a href="#part2" class="nav-link text-slate-600 hover:text-cyan-600 pb-2 border-b-2 border-transparent font-semibold">2. 소통의 규칙</a></li>
+                <li><a href="#part3" class="nav-link text-slate-600 hover:text-cyan-600 pb-2 border-b-2 border-transparent font-semibold">3. 부품 조립 실전</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main class="container mx-auto px-6 py-12">
+        <div class="text-center mb-16">
+            <h1 class="text-4xl md:text-5xl font-bold text-slate-900">DirectX 12 렌더링 기본 원리</h1>
+            <p class="mt-4 text-lg text-slate-600">게임 그래픽, 컴퓨터는 어떻게 그릴까요? 인터랙티브 가이드와 함께 알아보세요.</p>
+        </div>
+
+        <section id="part1" class="py-16 scroll-mt-20">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold text-cyan-700">Part 1. 소통의 틀 (The Framework)</h2>
+                <p class="mt-2 text-md text-slate-500">게임과 그래픽카드가 대화하기 위한 기본 구조를 알아봅니다.</p>
+            </div>
+            
+            <div class="space-y-12">
+                <div class="card p-8">
+                    <h3 class="text-2xl font-bold mb-4 text-slate-800">통역사(Driver)와 안전 구역(Mode)</h3>
+                    <p class="text-slate-600 mb-6">컴퓨터는 안정성을 위해 작업을 두 개의 공간으로 나눕니다. 드라이버는 이 두 공간을 넘나들며 게임과 하드웨어의 통신을 중개하는 '통역사' 역할을 합니다.</p>
+                    <div class="grid md:grid-cols-2 gap-6 text-center">
+                        <div class="p-6 border-4 border-green-300 rounded-lg bg-green-50">
+                            <h4 class="text-xl font-bold text-green-800 mb-2">🏰 유저 모드 (안전한 개인실)</h4>
+                            <p class="text-green-700">일반 프로그램이 실행되는 독립된 공간입니다. 한 앱에 문제가 생겨도 다른 앱이나 OS에 영향을 주지 않아 안전합니다.</p>
+                        </div>
+                        <div class="p-6 border-4 border-red-300 rounded-lg bg-red-50">
+                            <h4 class="text-xl font-bold text-red-800 mb-2">🚨 커널 모드 (위험한 관제실)</h4>
+                            <p class="text-red-700">OS 핵심 기능과 드라이버가 동작하는 강력한 공간입니다. 여기서 문제가 발생하면 컴퓨터 전체가 멈출 수 있습니다.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-8">
+                    <h3 class="text-2xl font-bold mb-4 text-slate-800">WDDM: 안정성을 위한 설계도 📜</h3>
+                    <p class="text-slate-600 mb-6">Windows Display Driver Model(WDDM)은 그래픽 드라이버의 안정성을 높이기 위해 만들어진 규칙입니다. 드라이버의 역할을 두 개로 분리하여 '커널 모드'의 위험을 최소화합니다.</p>
+                    <div class="p-6 bg-slate-100 rounded-lg">
+                        <p class="text-center font-semibold text-slate-700 mb-4">WDDM 명령 처리 흐름</p>
+                        <div class="flex flex-col md:flex-row items-center justify-center space-y-4 md:space-y-0 md:space-x-4 text-center">
+                            <div class="bg-white p-3 rounded-md shadow w-40">🎮 게임</div>
+                            <div class="text-2xl text-slate-400">→</div>
+                            <div class="bg-white p-3 rounded-md shadow w-48">🛡️ 유저 모드 드라이버<br><small>(무거운 작업 처리)</small></div>
+                            <div class="text-2xl text-slate-400">→</div>
+                            <div class="bg-white p-3 rounded-md shadow w-48">⚙️ 커널 모드 드라이버<br><small>(핵심 명령 전달)</small></div>
+                             <div class="text-2xl text-slate-400">→</div>
+                            <div class="bg-white p-3 rounded-md shadow w-40">🖥️ GPU</div>
+                        </div>
+                    </div>
+                    <p class="mt-6 text-center bg-cyan-100 text-cyan-800 p-3 rounded-md">결론적으로, WDDM 덕분에 게임 하나가 멈춰도 윈도우 전체는 안전하게 유지됩니다!</p>
+                </div>
+
+                <div class="card p-8">
+                    <h3 class="text-2xl font-bold mb-4 text-slate-800">DXGI: 궂은일을 도맡는 매니저 🎬</h3>
+                    <p class="text-slate-600 mb-6">DirectX Graphics Infrastructure(DXGI)는 DirectX가 순수하게 '그림 그리는 일'에만 집중하도록, 다음과 같은 기초적인 하드웨어 관리 업무를 전담합니다.</p>
+                     <ul class="space-y-3">
+                        <li class="flex items-center"><span class="text-2xl mr-3">✅</span><span class="text-slate-700">어떤 그래픽카드를 사용할지 찾기 (Adapter 열거)</span></li>
+                        <li class="flex items-center"><span class="text-2xl mr-3">✅</span><span class="text-slate-700">게임 화면을 띄울 창(Window) 관리하기</span></li>
+                        <li class="flex items-center"><span class="text-2xl mr-3">✅</span><span class="text-slate-700">다 그린 그림을 모니터에 최종적으로 보여주기 (Present)</span></li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <hr class="my-16 border-slate-200">
+
+        <section id="part2" class="py-16 scroll-mt-20">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold text-cyan-700">Part 2. 소통의 규칙 (The Rules)</h2>
+                <p class="mt-2 text-md text-slate-500">소프트웨어 부품들이 서로 대화하고 조립되기 위한 약속들을 알아봅니다.</p>
+            </div>
+            <div class="space-y-12">
+                <div class="card p-8">
+                    <h3 class="text-2xl font-bold mb-4 text-slate-800">API vs. ABI - 두 가지 레벨의 약속</h3>
+                    <p class="text-slate-600 mb-6">소프트웨어 부품들은 서로 다른 두 가지 레벨의 약속을 통해 상호작용합니다.</p>
+                    <div class="grid md:grid-cols-2 gap-6">
+                        <div class="p-6 bg-slate-50 rounded-lg">
+                            <h4 class="text-xl font-bold text-slate-800 mb-2">👨‍💻 API (소스 코드 약속)</h4>
+                            <p class="text-slate-600">프로그래머가 코드를 작성할 때 지키는 인터페이스입니다. 함수 이름, 매개변수 등이 여기에 해당합니다. <br><code>void DoSomething(int value);</code></p>
+                        </div>
+                        <div class="p-6 bg-slate-50 rounded-lg">
+                            <h4 class="text-xl font-bold text-slate-800 mb-2">🤖 ABI (기계어 약속)</h4>
+                            <p class="text-slate-600">코드가 컴파일된 후, 기계어끼리 소통하는 방식에 대한 약속입니다. 컴파일러마다 이 규칙이 달라 호환성 문제가 생길 수 있습니다.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="card p-8">
+                    <h3 class="text-2xl font-bold mb-4 text-slate-800">COM: 소프트웨어 계의 '레고 블록' ⚙️</h3>
+                    <p class="text-slate-600 mb-6">Component Object Model(COM)은 ABI 문제를 해결하기 위해 마이크로소프트가 만든 '소프트웨어 부품 조립 표준'입니다. 어떤 언어로 만들든, COM 규칙만 따르면 레고 블록처럼 서로 완벽하게 조립할 수 있습니다.</p>
+                    <div class="p-6 bg-slate-100 rounded-lg flex flex-col md:flex-row items-center justify-center gap-4">
+                        <div class="p-4 bg-blue-500 text-white rounded w-40 text-center">C++ App</div>
+                        <div class="p-4 bg-amber-500 text-white rounded-t-md rounded-b-none w-24 text-center">COM</div>
+                        <div class="p-4 bg-green-500 text-white rounded w-40 text-center">DirectX 12</div>
+                    </div>
+                     <p class="mt-6 text-center bg-amber-100 text-amber-800 p-3 rounded-md font-bold">DirectX 12는 COM 기반 기술이므로 다양한 언어와 환경에서 사용할 수 있습니다.</p>
+                </div>
+            </div>
+        </section>
+
+        <hr class="my-16 border-slate-200">
+
+        <section id="part3" class="py-16 scroll-mt-20">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold text-cyan-700">Part 3. 부품 조립 실전 (Putting It Together)</h2>
+                <p class="mt-2 text-md text-slate-500">COM 부품을 안전하고 효율적으로 사용하는 방법을 알아봅니다.</p>
+            </div>
+            <div class="space-y-12">
+                <div class="card p-8">
+                     <h3 class="text-2xl font-bold mb-4 text-slate-800">COM 객체의 생명 주기: 참조 횟수</h3>
+                    <p class="text-slate-600 mb-6">COM 객체는 '참조 횟수(Reference Count)'라는 값으로 생명을 관리합니다. 이 값을 직접 관리하는 것은 실수하기 쉽고 메모리 누수를 유발할 수 있습니다. 아래에서 직접 객체의 생명 주기를 관리해보세요.</p>
+                    <div class="p-6 bg-slate-100 rounded-lg flex flex-col items-center">
+                        <div id="com-object" class="interactive-box bg-cyan-500 text-white p-8 rounded-lg text-center w-64 mb-6">
+                            <p class="text-lg font-bold">COM 객체</p>
+                            <p>사용자 수: <span id="ref-count">0</span></p>
+                            <p id="status-text" class="mt-2 text-sm opacity-75">대기 중</p>
+                        </div>
+                        <div class="flex space-x-4">
+                            <button id="addref-btn" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded transition">AddRef() (사용자 추가)</button>
+                            <button id="release-btn" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded transition">Release() (사용자 감소)</button>
+                        </div>
+                    </div>
+                </div>
+
+                 <div class="card p-8">
+                    <h3 class="text-2xl font-bold mb-4 text-slate-800">ComPtr: 똑똑한 자동 관리자 ✨</h3>
+                    <p class="text-slate-600 mb-2">위에서 경험한 것처럼 참조 횟수를 수동으로 관리하는 것은 매우 번거롭습니다. `ComPtr`은 이 과정을 자동으로 처리해주는 '스마트 포인터'입니다.</p>
+                    <ul class="list-disc list-inside bg-slate-50 p-4 rounded-lg text-slate-700">
+                        <li>`ComPtr`에 객체를 담으면 → **자동으로 `AddRef()`** 호출</li>
+                        <li>`ComPtr`이 사라지면(함수 종료 등) → **자동으로 `Release()`** 호출</li>
+                    </ul>
+                     <p class="mt-4 text-center bg-cyan-100 text-cyan-800 p-3 rounded-md">결론적으로, ComPtr을 사용하면 메모리 누수 걱정 없이 안전하게 프로그래밍할 수 있습니다.</p>
+                </div>
+
+                <div class="card p-8">
+                    <h3 class="text-2xl font-bold mb-4 text-slate-800">객체 조립의 두 가지 방법</h3>
+                    <p class="text-slate-600 mb-6">COM 객체를 얻는 방법은 크게 두 가지입니다. 목적에 따라 올바른 방법을 사용해야 합니다.</p>
+                     <div class="grid md:grid-cols-2 gap-6">
+                        <div class="p-6 bg-slate-50 rounded-lg">
+                            <h4 class="text-xl font-bold text-slate-800 mb-2">🏭 CoCreateInstance() : 새 제품 만들기</h4>
+                            <p class="text-slate-600">완전히 새로운 객체를 생성합니다. 공장에서 새 제품을 찍어내는 것과 같습니다. 만들어지는 순간 참조 횟수는 1이 됩니다.</p>
+                        </div>
+                        <div class="p-6 bg-slate-50 rounded-lg">
+                            <h4 class="text-xl font-bold text-slate-800 mb-2">🔑 QueryInterface() : 다른 기능 빌려 쓰기</h4>
+                            <p class="text-slate-600">이미 있는 객체에게 다른 기능을 요청합니다. 다른 기능을 빌려오는 것이므로, 객체의 참조 횟수가 1 증가합니다.</p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+    </main>
+    
+    <footer class="bg-slate-800 text-white text-center p-6 mt-16">
+        <p>DirectX 12 Interactive Explainer</p>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const sections = document.querySelectorAll('section');
+            const navLinks = document.querySelectorAll('.nav-link');
+            const header = document.getElementById('main-header');
+            const headerHeight = header.offsetHeight;
+
+            const observerOptions = {
+                root: null,
+                rootMargin: `-${headerHeight}px 0px 0px 0px`,
+                threshold: 0.4
+            };
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        navLinks.forEach(link => {
+                            link.classList.remove('active');
+                            if (link.getAttribute('href').substring(1) === entry.target.id) {
+                                link.classList.add('active');
+                            }
+                        });
+                    }
+                });
+            }, observerOptions);
+
+            sections.forEach(section => {
+                observer.observe(section);
+            });
+            
+            const comObject = document.getElementById('com-object');
+            const refCountSpan = document.getElementById('ref-count');
+            const statusText = document.getElementById('status-text');
+            const addRefBtn = document.getElementById('addref-btn');
+            const releaseBtn = document.getElementById('release-btn');
+            
+            let refCount = 0;
+
+            function updateDisplay() {
+                refCountSpan.textContent = refCount;
+                if (refCount > 0) {
+                    comObject.classList.remove('fade-out');
+                    statusText.textContent = '사용 중';
+                    comObject.style.backgroundColor = '#0ea5e9'; // sky-500
+                } else {
+                    if (comObject.style.opacity !== '0') {
+                        statusText.textContent = '소멸됨!';
+                        comObject.style.backgroundColor = '#64748b'; // slate-500
+                        setTimeout(() => {
+                           if(refCount === 0) comObject.classList.add('fade-out');
+                        }, 500);
+                    }
+                }
+            }
+
+            addRefBtn.addEventListener('click', () => {
+                if (refCount === 0) {
+                   comObject.classList.remove('fade-out');
+                   statusText.textContent = '생성됨!';
+                }
+                refCount++;
+                updateDisplay();
+            });
+
+            releaseBtn.addEventListener('click', () => {
+                if (refCount > 0) {
+                    refCount--;
+                    updateDisplay();
+                }
+            });
+            
+            updateDisplay();
+            comObject.classList.add('fade-out');
+        });
+    </script>
+</body>
+</html>
